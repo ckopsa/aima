@@ -4,52 +4,48 @@
     (insert-file-contents filePath)
     (buffer-string)))
 
+(defun get-string-from-buffer (buffer)
+  "Return filePath's file content."
+  (with-current-buffer buffer
+    (buffer-string)))
+
 (defun list-freq (sequence)
   (let ((frequencies (make-hash-table :test 'equal)))
     (dolist (e sequence) (incf (gethash e frequencies 0)))
     (loop for key being the hash-keys of frequencies
-          collect (cons key (gethash key frequencies)))))
+          collecting (cons key (gethash key frequencies)) into freqs
+          finally return (append freqs (list (cons "<unk>" (length freqs))))
+          )))
+
+(defun assoc-cdr (assoc-list) (mapcar (lambda (el) (cdr el)) assoc-list))
+
+(defun assoc-car (assoc-list) (mapcar (lambda (el) (car el)) assoc-list))
 
 (defun cons-cdr-sort (sequence)
   (-sort (lambda (rel lel) (< (cdr lel) (cdr rel))) sequence))
 
-(defun unigram (corpus)
-  (let* ((corpus-gram (split-string (downcase corpus) " "))
-         (corpus-freq (list-freq corpus-gram))
-         (corpus-freq-sort (cons-cdr-sort corpus-freq)))
-    corpus-freq-sort))
-
-(defun unigram-to-bigram (unigram)
-  (let* ((size (1- (length unigram))))
+(defun unigram-to-n-gram (unigram n)
+  (let* ((size (- (length unigram) (1- n))))
     (loop for i from 0 to size
-          collect (concat (nth i unigram) " " (nth (1+ i) unigram)))))
+          collect (mapconcat (lambda (el) el) (loop for j from 0 to (1- n) collect (nth (+ i j) unigram)) " "))))
 
-(defun unigram-to-trigram (unigram)
-  (let* ((size (- (length unigram) 2)))
-    (loop for i from 0 to size
-          collect (concat (nth i unigram) " " (nth (1+ i) unigram) " " (nth (1+ (1+ i)) unigram)))))
-
-(defun bigram (corpus)
-  (let* ((corpus-gram (unigram-to-bigram (split-string (downcase corpus) " ")))
+(defun n-gram (corpus n)
+  (let* ((unigram (split-string (downcase corpus) " "))
+         (corpus-gram (if (= n 1) unigram (unigram-to-n-gram unigram n)))
          (corpus-freq (list-freq corpus-gram))
          (corpus-freq-sort (cons-cdr-sort corpus-freq)))
     corpus-freq-sort))
 
-(defun trigram (corpus)
-  (let* ((corpus-gram (unigram-to-trigram (split-string (downcase corpus) " ")))
-         (corpus-freq (list-freq corpus-gram))
-         (corpus-freq-sort (cons-cdr-sort corpus-freq)))
-    corpus-freq-sort))
+(defun perplexity (language-model corpus)
+  (let* (
+         (lm-size (float (apply '+ (assoc-cdr language-model))))
+         (probabilities (mapcar (lambda (corpus-unit) (/ (alist-get corpus-unit language-model) lm-size)) corpus))
+         (total-probabilities (apply '+ probabilities))
+         )
+    (expt total-probabilities (/ (float -1) (length corpus)))
+    ))
 
-(setq hf-unigram (unigram (get-string-from-file "~/huckfinn.txt")))
-
-(setq hf-bigram (bigram (get-string-from-file "~/huckfinn.txt")))
-
-(setq hf-trigram (trigram (get-string-from-file "~/huckfinn.txt")))
-
-(setq bm-unigram (unigram (get-string-from-file "~/bom.txt")))
-(setq bm-bigram (bigram (get-string-from-file "~/bom.txt")))
-(setq bm-trigram (trigram (get-string-from-file "~/bom.txt")))
+(perplexity test-unigram (generate-text test-unigram test-bigram test-trigram))
 
 (defun generate-text (unigram bigram trigram)
   (let* ((assoc-cdr (lambda (assoc-list) (mapcar (lambda (el) (cdr el)) assoc-list)))
@@ -72,9 +68,14 @@
          (bi-words (loop for i from 0 to 33 collect (funcall word-at-percent bi-pair (cl-random 1.0))))
          (tri-words (loop for i from 0 to 33 collect (funcall word-at-percent tri-pair (cl-random 1.0))))
          )
-    (mapconcat (lambda (el) el) (mapcar* (lambda (uni-word bi-word tri-word) (concat uni-word " " bi-word " " tri-word)) uni-words bi-words tri-words) " ")
+    ;;(mapconcat (lambda (el) el) (mapcar* (lambda (uni-word bi-word tri-word) (concat uni-word " " bi-word " " tri-word)) uni-words bi-words tri-words) " ")
+    ;;(mapcar (lambda (el) el) (mapcar* (lambda (uni-word bi-word tri-word) (concat uni-word " " bi-word " " tri-word)) uni-words bi-words tri-words))
+    uni-words
     ))
 
-(generate-text hf-unigram hf-bigram hf-trigram)
+(setq test-unigram (n-gram (get-string-from-buffer "*scratch*") 1))
+(setq test-bigram  (n-gram (get-string-from-buffer "*scratch*") 2))
+(setq test-trigram (n-gram (get-string-from-buffer "*scratch*") 3))
+(setq test-quadgram (n-gram (get-string-from-buffer "*scratch*") 4))
 
-(length bm-unigram)
+(perplexity (generate-text test-unigram test-bigram test-trigram) test-unigram)
