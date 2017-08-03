@@ -9,6 +9,30 @@
   (with-current-buffer buffer
     (buffer-string)))
 
+(require 'url)
+(defun url-get-tree (url)
+  "HTTP GET to URL RETURNS TREE."
+  (with-current-buffer
+      (url-retrieve-synchronously url)
+    (libxml-parse-html-region (point-min) (point-max) nil t)))
+
+(defun url-get-readable-tree (url)
+  (let (
+        (url-tree (url-get-tree url))
+        )
+    url-tree
+    ))
+
+(require 'dom)
+(defun clean-html (s)
+  (let* (
+         (s-no-newline (replace-regexp-in-string "\n+" " " s))
+         (s-no-bar (replace-regexp-in-string "|+" "" s-no-newline))
+         (s-no-omnispace (replace-regexp-in-string "\s+" " " s-no-bar))
+         )
+    s-no-omnispace
+    ))
+
 (defun list-freq (sequence)
   (let ((frequencies (make-hash-table :test 'equal)))
     (dolist (e sequence) (incf (gethash e frequencies 0)))
@@ -45,7 +69,6 @@
     (expt total-probabilities (/ (float -1) (length corpus)))
     ))
 
-(perplexity test-unigram (generate-text test-unigram test-bigram test-trigram))
 
 (defun generate-text (unigram bigram trigram)
   (let* ((assoc-cdr (lambda (assoc-list) (mapcar (lambda (el) (cdr el)) assoc-list)))
@@ -73,9 +96,58 @@
     uni-words
     ))
 
-(setq test-unigram (n-gram (get-string-from-buffer "*scratch*") 1))
-(setq test-bigram  (n-gram (get-string-from-buffer "*scratch*") 2))
-(setq test-trigram (n-gram (get-string-from-buffer "*scratch*") 3))
-(setq test-quadgram (n-gram (get-string-from-buffer "*scratch*") 4))
+;; (setq test-unigram (n-gram (get-string-from-buffer "*scratch*") 1))
+;; (setq test-bigram  (n-gram (get-string-from-buffer "*scratch*") 2))
+;; (setq test-trigram (n-gram (get-string-from-buffer "*scratch*") 3))
+;; (setq test-quadgram (n-gram (get-string-from-buffer "*scratch*") 4))
+;; (perplexity (generate-text test-unigram test-bigram test-trigram) test-unigram)
 
-(perplexity (generate-text test-unigram test-bigram test-trigram) test-unigram)
+(setq test-url "http://www.greatnewsnetwork.org/index.php/news/article/u.n._court_orders_japan_to_halt_antarctic_whaling/")
+
+
+(defun clean-html (s)
+  (let* (
+         (s-no-newline (replace-regexp-in-string "\n+" " " s))
+         (s-no-bar (replace-regexp-in-string "[ |]+" "" s-no-newline))
+         (s-no-omnispace (replace-regexp-in-string "\s+" " " s-no-bar))
+         )
+    s-no-omnispace
+    ))
+
+(defun extract-content-tag (tag dom-tree)
+  (let* (
+         (tag-content (mapcar (lambda (tag) (dom-text tag)) (dom-by-tag dom-tree tag)))
+         (clean-content (cl-remove-if
+                         (lambda (child) (or (string-match "\\`[\n\r\t |  ]*\\'" child)
+                                             (equal child "")
+                                             (string-match "HTTP\/\d\.\d \d{3}.*" child)
+                                             ))
+                         tag-content))
+         )
+    tag-content
+    ))
+
+(defun extract-content-html (url)
+  (let* (
+         (dom-tree (url-get-readable-tree url))
+         (tags (list 'div 'span))
+         (content (apply 'append (mapcar (lambda (tag) (extract-content-tag tag dom-tree)) tags)))
+         (cleaned-content (mapconcat (lambda (s) (clean-html s)) content ""))
+         )
+    cleaned-content
+    ))
+
+(setq test-tree (url-get-readable-tree test-url))
+
+(setq test-trees (mapconcat (lambda (url) (extract-content-html url)) urls " "))
+
+(extract-content-tag 'p test-tree)
+
+(setq test-content (extract-content-html test-url))
+
+
+(setq test-unigram (n-gram test-trees 1))
+(setq test-bigram  (n-gram test-trees 2))
+(setq test-trigram (n-gram test-trees 3))
+(setq test-quadgram (n-gram test-trees 4))
+(perplexity test-unigram (generate-text test-unigram test-bigram test-trigram))
