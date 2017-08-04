@@ -102,14 +102,20 @@
 ;; (setq test-quadgram (n-gram (get-string-from-buffer "*scratch*") 4))
 ;; (perplexity (generate-text test-unigram test-bigram test-trigram) test-unigram)
 
-(setq test-url "http://www.greatnewsnetwork.org/index.php/news/article/u.n._court_orders_japan_to_halt_antarctic_whaling/")
+(setq test-url
+      "http://www.vancouversun.com/news/Vancouver+councillor+bring+shark+fins+city+hall/7259812/story.html"
+)
 
 
 (defun clean-html (s)
   (let* (
          (s-no-newline (replace-regexp-in-string "\n+" " " s))
          (s-no-bar (replace-regexp-in-string "[ |]+" "" s-no-newline))
-         (s-no-omnispace (replace-regexp-in-string "\s+" " " s-no-bar))
+         (s-no-inline (replace-regexp-in-string "{.*}" "" s-no-bar))
+         (s-no-symbol (replace-regexp-in-string "" "" s-no-inline))
+      ;;   (s-no-non-alphanum (replace-regexp-in-string "[^a-zA-Z0-9 -]" "" s-no-newline))
+         (s-no-tab (replace-regexp-in-string "\t+" " " s-no-symbol))
+         (s-no-omnispace (replace-regexp-in-string "[ ]+" " " s-no-tab))
          )
     s-no-omnispace
     ))
@@ -130,18 +136,20 @@
 (defun extract-content-html (url)
   (let* (
          (dom-tree (url-get-readable-tree url))
-         (tags (list 'div 'span))
+         (tags (list 'title 'span 'p))
          (content (apply 'append (mapcar (lambda (tag) (extract-content-tag tag dom-tree)) tags)))
-         (cleaned-content (mapconcat (lambda (s) (clean-html s)) content ""))
+         (cleaned-content (mapconcat (lambda (s) (clean-html s)) content " "))
          )
     cleaned-content
     ))
 
+(setq test-content (extract-content-html test-url))
+
 (setq test-tree (url-get-readable-tree test-url))
 
-(setq test-trees (mapconcat (lambda (url) (extract-content-html url)) urls " "))
+;;(setq test-trees (mapconcat (lambda (url) (extract-content-html url)) urls " "))
 
-(extract-content-tag 'p test-tree)
+(extract-content-tag 'p testee)
 
 (setq test-content (extract-content-html test-url))
 
@@ -151,3 +159,30 @@
 (setq test-trigram (n-gram test-trees 3))
 (setq test-quadgram (n-gram test-trees 4))
 (perplexity test-unigram (generate-text test-unigram test-bigram test-trigram))
+
+(setq testee (dom-remove-by-tag test-tree 'script))
+(equal 'html (dom-tag testee))
+(defun dom-remove-by-tag (dom tag)
+  (if (stringp dom) dom
+  (let* ((d-tag (dom-tag dom))
+         (attr (dom-attributes dom))
+         (children (loop for child in (dom-children dom)
+                         if (or (stringp child) (not (equal (dom-tag child) tag)))
+                         collect (dom-remove-by-tag child tag)
+                         ))
+         )
+    (cons d-tag (cons attr children)))))
+(setq dom-adf (dom-test test-tree 'script))
+
+(defun dom-exclude-tag (dom tag)
+  "Return elements in DOM that is of type TAG.
+A name is a symbol like `td'."
+  (let ((matches (cl-loop for child in (dom-children dom)
+                          for matches = (and (not (stringp child))
+                                             (dom-exclude-tag child tag))
+                          when matches
+                          append matches)))
+    (if (not (equal (dom-tag dom) tag))
+        (cons dom matches)
+      matches)))
+
