@@ -1,3 +1,5 @@
+(require 'dom)
+
 (defun get-string-from-file (filePath)
   "Return filePath's file content."
   (with-temp-buffer
@@ -15,23 +17,6 @@
   (with-current-buffer
       (url-retrieve-synchronously url)
     (libxml-parse-html-region (point-min) (point-max) nil t)))
-
-(defun url-get-readable-tree (url)
-  (let (
-        (url-tree (url-get-tree url))
-        )
-    url-tree
-    ))
-
-(require 'dom)
-(defun clean-html (s)
-  (let* (
-         (s-no-newline (replace-regexp-in-string "\n+" " " s))
-         (s-no-bar (replace-regexp-in-string "|+" "" s-no-newline))
-         (s-no-omnispace (replace-regexp-in-string "\s+" " " s-no-bar))
-         )
-    s-no-omnispace
-    ))
 
 (defun list-freq (sequence)
   (let ((frequencies (make-hash-table :test 'equal)))
@@ -61,14 +46,12 @@
     corpus-freq-sort))
 
 (defun perplexity (language-model corpus)
-  (let* (
-         (lm-size (float (apply '+ (assoc-cdr language-model))))
-         (probabilities (mapcar (lambda (corpus-unit) (/ (alist-get corpus-unit language-model) lm-size)) corpus))
+  (let* ((lm-size (float (apply '+ (assoc-cdr language-model))))
+         (probabilities (map 'vector (lambda (corpus-unit) (/ (alist-get corpus-unit language-model) lm-size)) corpus))
          (total-probabilities (apply '+ probabilities))
          )
     (expt total-probabilities (/ (float -1) (length corpus)))
     ))
-
 
 (defun generate-text (unigram bigram trigram)
   (let* ((assoc-cdr (lambda (assoc-list) (mapcar (lambda (el) (cdr el)) assoc-list)))
@@ -91,98 +74,75 @@
          (bi-words (loop for i from 0 to 33 collect (funcall word-at-percent bi-pair (cl-random 1.0))))
          (tri-words (loop for i from 0 to 33 collect (funcall word-at-percent tri-pair (cl-random 1.0))))
          )
-    ;;(mapconcat (lambda (el) el) (mapcar* (lambda (uni-word bi-word tri-word) (concat uni-word " " bi-word " " tri-word)) uni-words bi-words tri-words) " ")
-    ;;(mapcar (lambda (el) el) (mapcar* (lambda (uni-word bi-word tri-word) (concat uni-word " " bi-word " " tri-word)) uni-words bi-words tri-words))
     uni-words
     ))
 
-;; (setq test-unigram (n-gram (get-string-from-buffer "*scratch*") 1))
-;; (setq test-bigram  (n-gram (get-string-from-buffer "*scratch*") 2))
-;; (setq test-trigram (n-gram (get-string-from-buffer "*scratch*") 3))
-;; (setq test-quadgram (n-gram (get-string-from-buffer "*scratch*") 4))
-;; (perplexity (generate-text test-unigram test-bigram test-trigram) test-unigram)
+(defun eww-score-readability (node)
+  (let ((score -1))
+    (cond
+     ((memq (dom-tag node) '(script head comment))
+      (setq score -2))
+     ((eq (dom-tag node) 'meta)
+      (setq score -1))
+     ((eq (dom-tag node) 'img)
+      (setq score 2))
+     ((eq (dom-tag node) 'a)
+      (setq score (- (length (split-string (dom-text node))))))
+     (t
+      (dolist (elem (dom-children node))
+        (if (stringp elem)
+            (setq score (+ score (length (split-string elem))))
+          (setq score (+ score
+                         (or (cdr (assoc :eww-readability-score (cdr elem)))
+                             (eww-score-readability elem))))))))
+    ;; Cache the score of the node to avoid recomputing all the time.
+    (dom-set-attribute node :eww-readability-score score)
+    score))
 
-(setq test-url
-      "http://www.vancouversun.com/news/Vancouver+councillor+bring+shark+fins+city+hall/7259812/story.html"
-)
+(defun eww-highest-readability (node)
+  (let ((result node)
+        highest)
+    (dolist (elem (dom-non-text-children node))
+      (when (> (or (dom-attr
+                    (setq highest (eww-highest-readability elem))
+                    :eww-readability-score)
+                   most-negative-fixnum)
+               (or (dom-attr result :eww-readability-score)
+                   most-negative-fixnum))
+        (setq result highest)))
+    result))
 
+(defun get-readable-text (url)
+  (let* ((dom-root-node (url-get-tree url))
+         (read-score (eww-score-readability dom-root-node))
+         (base url))
+    (list read-score base)
+    (with-temp-buffer
+      (shr-insert-document dom-root-node)
+      (replace-regexp-in-string "\s\s+" "" (replace-regexp-in-string "[^A-Za-z0-9\']+" " " (buffer-string)))
+      )))
 
-(defun clean-html (s)
-  (let* (
-         (s-no-newline (replace-regexp-in-string "\n+" " " s))
-         (s-no-bar (replace-regexp-in-string "[ |]+" "" s-no-newline))
-         (s-no-inline (replace-regexp-in-string "{.*}" "" s-no-bar))
-         (s-no-symbol (replace-regexp-in-string "" "" s-no-inline))
-      ;;   (s-no-non-alphanum (replace-regexp-in-string "[^a-zA-Z0-9 -]" "" s-no-newline))
-         (s-no-tab (replace-regexp-in-string "\t+" " " s-no-symbol))
-         (s-no-omnispace (replace-regexp-in-string "[ ]+" " " s-no-tab))
+(setq test-unigram (n-gram read-test 1))
+(setq test-bigram  (n-gram read-test 2))
+(setq test-trigram (n-gram read-test 3))
+(setq test-quadgram (n-gram read-test 4))
+(generate-text test-unigram test-bigram test-trigram)
+(perplexity test-unigram read-test)
+
+(setq test-url "http://www.vancouversun.com/news/Vancouver+councillor+bring+shark+fins+city+hall/7259812/story.html")
+(setq read-test (substring-no-properties (get-readable-text test-url)))
+
+(setq test (do-stuff test-url))
+
+(float (apply '+ (assoc-cdr test-unigram)))
+(mapcar (lambda (corpus-unit) (/ (alist-get (downcase corpus-unit) test-unigram) 1847.0)) (split-string read-test))
+(alist-get "the" test-unigram)
+(mapcar (lambda (corpus-unit) corpus-unit) (split-string read-test))
+(defun perplexity (language-model corpus)
+  (let* ((lm-size (float (apply '+ (assoc-cdr language-model))))
+         (probabilities (mapcar (lambda (corpus-unit) (/ (alist-get corpus-unit language-model) lm-size)) corpus))
+         (total-probabilities (apply '+ probabilities))
          )
-    s-no-omnispace
+    (expt total-probabilities (/ (float -1) (length corpus)))
     ))
-
-(defun extract-content-tag (tag dom-tree)
-  (let* (
-         (tag-content (mapcar (lambda (tag) (dom-text tag)) (dom-by-tag dom-tree tag)))
-         (clean-content (cl-remove-if
-                         (lambda (child) (or (string-match "\\`[\n\r\t |  ]*\\'" child)
-                                             (equal child "")
-                                             (string-match "HTTP\/\d\.\d \d{3}.*" child)
-                                             ))
-                         tag-content))
-         )
-    tag-content
-    ))
-
-(defun extract-content-html (url)
-  (let* (
-         (dom-tree (url-get-readable-tree url))
-         (tags (list 'title 'span 'p))
-         (content (apply 'append (mapcar (lambda (tag) (extract-content-tag tag dom-tree)) tags)))
-         (cleaned-content (mapconcat (lambda (s) (clean-html s)) content " "))
-         )
-    cleaned-content
-    ))
-
-(setq test-content (extract-content-html test-url))
-
-(setq test-tree (url-get-readable-tree test-url))
-
-;;(setq test-trees (mapconcat (lambda (url) (extract-content-html url)) urls " "))
-
-(extract-content-tag 'p testee)
-
-(setq test-content (extract-content-html test-url))
-
-
-(setq test-unigram (n-gram test-trees 1))
-(setq test-bigram  (n-gram test-trees 2))
-(setq test-trigram (n-gram test-trees 3))
-(setq test-quadgram (n-gram test-trees 4))
-(perplexity test-unigram (generate-text test-unigram test-bigram test-trigram))
-
-(setq testee (dom-remove-by-tag test-tree 'script))
-(equal 'html (dom-tag testee))
-(defun dom-remove-by-tag (dom tag)
-  (if (stringp dom) dom
-  (let* ((d-tag (dom-tag dom))
-         (attr (dom-attributes dom))
-         (children (loop for child in (dom-children dom)
-                         if (or (stringp child) (not (equal (dom-tag child) tag)))
-                         collect (dom-remove-by-tag child tag)
-                         ))
-         )
-    (cons d-tag (cons attr children)))))
-(setq dom-adf (dom-test test-tree 'script))
-
-(defun dom-exclude-tag (dom tag)
-  "Return elements in DOM that is of type TAG.
-A name is a symbol like `td'."
-  (let ((matches (cl-loop for child in (dom-children dom)
-                          for matches = (and (not (stringp child))
-                                             (dom-exclude-tag child tag))
-                          when matches
-                          append matches)))
-    (if (not (equal (dom-tag dom) tag))
-        (cons dom matches)
-      matches)))
-
+(mapcar (lambda (corpus-unit) (/ (alist-get corpus-unit language-model) lm-size)) read-test)
